@@ -1,0 +1,11 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_USER: majix, POSTGRES_PASSWORD: majix, POSTGRES_DB: majix}
+    ports: ['5432:5432']
+  redis: {image: redis:7-alpine, ports: ['6379:6379']}
+  api:
+    build: {context: ., dockerfile: infrastructure/Dockerfile}
+    environment: [DATABASE_URL=postgresql://majix:majix@postgres:5432/majix, REDIS_URL=redis://redis:6379, MOCK_MODE=true, JWT_SECRET=dev-secret]
+    ports: ['4000:4000']
+    depends_on: [postgres, redis]

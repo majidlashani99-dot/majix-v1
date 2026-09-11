@@ -1,0 +1,2 @@
+import React from 'react';import{createRoot}from'react-dom/client';import'./style.css';
+function Admin(){return <main><h1>MAJIX Admin</h1><p>Operations console</p><section><b>System status</b><strong> Healthy</strong></section><section><b>Rewards today</b><strong> 128,450 MJX</strong></section><section><b>Pending withdrawals</b><strong> 14</strong></section><h2>Quick actions</h2><button>Manage tasks</button><button>Review withdrawals</button><button>Audit logs</button></main>}createRoot(document.getElementById('root')!).render(<Admin/>);

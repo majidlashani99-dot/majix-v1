@@ -1,0 +1,1 @@
+{"name":"@majix/admin","scripts":{"dev":"vite --host 0.0.0.0 --port 5174","build":"vite build"},"dependencies":{"vite":"^6.0.0","typescript":"^5.7.0","react":"^18.3.1","react-dom":"^18.3.1"}}

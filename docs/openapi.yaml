@@ -1,0 +1,10 @@
+openapi: 3.0.3
+info: {title: MAJIX API, version: 1.0.0}
+servers: [{url: http://localhost:4000}]
+paths:
+  /health: {get: {responses: {'200': {description: OK}}}}
+  /auth/telegram: {post: {summary: Authenticate Telegram Mini App, responses: {'200': {description: Session}}}}
+  /tasks: {get: {security: [{bearerAuth: []}], responses: {'200': {description: Tasks}}}}
+  /tasks/{id}/complete: {post: {security: [{bearerAuth: []}], parameters: [{name: id, in: path, required: true, schema: {type: string}}], responses: {'200': {description: Reward}}}}
+  /wallet/transactions: {get: {security: [{bearerAuth: []}], responses: {'200': {description: Ledger}}}}
+components: {securitySchemes: {bearerAuth: {type: http, scheme: bearer}}}
