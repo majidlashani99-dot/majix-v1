@@ -1,8 +1,8 @@
 ﻿{
   "compilerOptions": {
     "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
+    "module": "CommonJS",
+    "moduleResolution": "node",
     "lib": ["ES2022", "DOM"],
     "types": [],
     "outDir": "./dist",
@@ -10,7 +10,8 @@
     "strict": false,
     "noImplicitAny": false,
     "skipLibCheck": true,
-    "esModuleInterop": true
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts", "src/**/*.test.ts"]
