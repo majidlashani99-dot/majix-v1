@@ -1,15 +1,88 @@
-import Fastify from 'fastify'; import cors from '@fastify/cors'; import helmet from '@fastify/helmet'; import rateLimit from '@fastify/rate-limit'; import jwt from 'jsonwebtoken'; import {PrismaClient,LedgerType,TaskStatus} from '@prisma/client'; import crypto from 'node:crypto'; import {validateTelegramInitData} from './telegram';
-const db=new PrismaClient(); const app=Fastify({logger:true});
-await app.register(cors,{origin:true}); await app.register(helmet); await app.register(rateLimit,{max:120,timeWindow:'1 minute'});
-const ok=(data:unknown)=>({success:true,data}); const fail=(code:string,message:string)=>({success:false,error:{code,message}});
-function auth(req:any,reply:any){const token=(req.headers.authorization||'').replace('Bearer ',''); try{return jwt.verify(token,process.env.JWT_SECRET||'dev-secret') as {sub:string}}catch{reply.code(401).send(fail('UNAUTHORIZED','Authentication required')); return null}}
-app.get('/health',async()=>ok({service:'majix-api',status:'ok'}));
-app.post('/auth/telegram',async(req:any,reply)=>{const body=req.body as {initData?:string;telegramId?:string;username?:string;firstName?:string;lastName?:string;referralCode?:string}; if(process.env.MOCK_MODE!=='true'){if(!body.initData||!validateTelegramInitData(body.initData,process.env.TELEGRAM_BOT_TOKEN||''))return reply.code(401).send(fail('UNAUTHORIZED','Invalid Telegram initData')); const p=new URLSearchParams(body.initData||''); const tg=JSON.parse(p.get('user')||'{}'); body={...body,telegramId:String(tg.id),username:tg.username,firstName:tg.first_name,lastName:tg.last_name};} if(!body.telegramId||!body.firstName)return reply.code(400).send(fail('UNAUTHORIZED','Telegram identity is required')); let u=await db.user.findUnique({where:{telegramId:body.telegramId}}); if(!u){const ref=body.referralCode?await db.user.findUnique({where:{referralCode:body.referralCode}}):null; u=await db.user.create({data:{telegramId:body.telegramId,username:body.username,firstName:body.firstName,lastName:body.lastName,referralCode:'MAJIX'+crypto.randomBytes(4).toString('hex').toUpperCase(),referredById:ref?.id,wallet:{create:{}}}})} const token=jwt.sign({sub:u.id,role:u.role},process.env.JWT_SECRET||'dev-secret',{expiresIn:'7d'}); return ok({token,user:u});});
-app.get('/me',async(req,reply)=>{const a=auth(req,reply); if(!a)return; const u=await db.user.findUnique({where:{id:a.sub},include:{wallet:true}}); return ok(u)});
-app.get('/tasks',async(req,reply)=>{const a=auth(req,reply);if(!a)return; const tasks=await db.task.findMany({where:{status:'AVAILABLE'},orderBy:{createdAt:'desc'}}); return ok(tasks)});
-app.post('/tasks/:id/start',async(req:any,reply)=>{const a=auth(req,reply);if(!a)return; const task=await db.task.findUnique({where:{id:req.params.id}});if(!task)return reply.code(404).send(fail('TASK_EXPIRED','Task not found')); const ut=await db.userTask.upsert({where:{userId_taskId:{userId:a.sub,taskId:task.id}},create:{userId:a.sub,taskId:task.id,status:TaskStatus.STARTED},update:{status:TaskStatus.STARTED}}); return ok(ut)});
-app.post('/tasks/:id/complete',async(req:any,reply)=>{const a=auth(req,reply);if(!a)return; const task=await db.task.findUnique({where:{id:req.params.id}}); const wallet=await db.wallet.findUnique({where:{userId:a.sub}}); if(!task||!wallet)return reply.code(404).send(fail('TASK_EXPIRED','Task unavailable')); const existing=await db.walletTransaction.findFirst({where:{userId:a.sub,referenceType:'TASK',referenceId:task.id}}); if(existing)return ok({balance:existing.balanceAfter,transaction:existing}); const result=await db.$transaction(async(tx)=>{const w=await tx.wallet.findUnique({where:{id:wallet.id}}); if(!w)throw Error('wallet'); const after=w.availableBalance+task.reward; const t=await tx.walletTransaction.create({data:{walletId:w.id,userId:a.sub,type:task.type==='WATCH_VIDEO'?LedgerType.VIDEO_REWARD:LedgerType.TASK_REWARD,amount:task.reward,balanceBefore:w.availableBalance,balanceAfter:after,referenceType:'TASK',referenceId:task.id,description:task.title,idempotencyKey:((req.headers['idempotency-key'] as string)||crypto.randomUUID())}}); await tx.wallet.update({where:{id:w.id},data:{availableBalance:after}}); await tx.userTask.update({where:{userId_taskId:{userId:a.sub,taskId:task.id}},data:{status:TaskStatus.COMPLETED,completedAt:new Date()}}).catch(()=>{}); return t}); return ok({balance:result.balanceAfter,transaction:result})});
-app.get('/wallet/transactions',async(req,reply)=>{const a=auth(req,reply);if(!a)return; return ok(await db.walletTransaction.findMany({where:{userId:a.sub},orderBy:{createdAt:'desc'},take:50}))});
-app.post('/wallet/withdraw',async(req:any,reply)=>{const a=auth(req,reply);if(!a)return; const amount=Number(req.body?.amount); if(!Number.isInteger(amount)||amount<Number(process.env.MIN_WITHDRAWAL||1000))return reply.code(400).send(fail('WITHDRAWAL_LIMIT','Invalid withdrawal amount')); const w=await db.wallet.findUnique({where:{userId:a.sub}});if(!w||w.availableBalance<amount)return reply.code(400).send(fail('INSUFFICIENT_BALANCE','Insufficient MJX balance')); const wd=await db.$transaction(async(tx)=>{const cur=await tx.wallet.findUnique({where:{id:w.id}});if(!cur||cur.availableBalance<amount)throw Error('balance'); await tx.wallet.update({where:{id:w.id},data:{availableBalance:{decrement:amount},lockedBalance:{increment:amount}}}); return tx.withdrawal.create({data:{userId:a.sub,amount,method:req.body.method||'manual',destination:req.body.destination||'',status:'PENDING'}})}); return ok(wd)});
-app.get('/matches',async()=>ok([{id:'demo-1',homeTeam:'Real Madrid',awayTeam:'Manchester City',league:'UEFA Champions League',kickoff:new Date(Date.now()+86400000).toISOString(),status:'UPCOMING',odds:{home:1.85,draw:3,away:4.2}}]));
-app.listen({port:Number(process.env.PORT||4000),host:'0.0.0.0'});
+﻿import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
+import rateLimit from '@fastify/rate-limit';
+import jwt from 'jsonwebtoken';
+import { PrismaClient } from '@prisma/client';
+import crypto from 'node:crypto';
+import { validateTelegramInitData } from './telegram';
+import { MockSportsProvider } from './providers';
+
+const app = Fastify({ logger: true });
+const db = new PrismaClient();
+const sports = new MockSportsProvider();
+
+const ok = (data: any) => ({ success: true, data });
+const fail = (code: string, message: string) => ({ success: false, error: { code, message } });
+
+app.get('/health', async () => ok({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/matches', async () => ok(await sports.getMatches()));
+app.get('/matches/live', async () => ok(await sports.getLiveMatches()));
+app.get('/matches/:id', async (req: any) => {
+  const m = await sports.getMatch(req.params.id);
+  return m ? ok(m) : fail('NOT_FOUND', 'Match not found');
+});
+
+app.post('/auth/telegram', async (req: any, reply) => {
+  let body = req.body as {
+    initData?: string;
+    telegramId?: string;
+    username?: string;
+    firstName?: string;
+    lastName?: string;
+    referralCode?: string;
+  };
+
+  if (process.env.MOCK_MODE !== 'true') {
+    if (!body.initData || !validateTelegramInitData(body.initData, process.env.TELEGRAM_BOT_TOKEN || '')) {
+      return reply.code(401).send(fail('UNAUTHORIZED', 'Invalid Telegram initData'));
+    }
+    const p = new URLSearchParams(body.initData || '');
+    const tg = JSON.parse(p.get('user') || '{}');
+    body = {
+      ...body,
+      telegramId: String(tg.id),
+      username: tg.username,
+      firstName: tg.first_name,
+      lastName: tg.last_name
+    };
+  }
+
+  if (!body.telegramId || !body.firstName) {
+    return reply.code(400).send(fail('UNAUTHORIZED', 'Telegram identity is required'));
+  }
+
+  let u = await db.user.findUnique({ where: { telegramId: body.telegramId } });
+  if (!u) {
+    const ref = body.referralCode ? await db.user.findUnique({ where: { referralCode: body.referralCode } }) : null;
+    u = await db.user.create({
+      data: {
+        telegramId: body.telegramId,
+        username: body.username,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        referralCode: 'MAJIX' + crypto.randomBytes(4).toString('hex').toUpperCase(),
+        referredById: ref?.id,
+        wallet: { create: {} }
+      }
+    });
+  }
+
+  const token = jwt.sign({ sub: u.id, role: u.role }, process.env.JWT_SECRET || 'dev-secret', { expiresIn: '7d' });
+  return ok({ token, user: u });
+});
+
+async function bootstrap() {
+  await app.register(cors, { origin: true });
+  await app.register(helmet);
+  await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+
+  const port = Number(process.env.PORT) || 3000;
+  await app.listen({ port, host: '0.0.0.0' });
+  console.log(`MAJIX API server running on port ${port}`);
+}
+
+bootstrap().catch(err => {
+  console.error(err);
+  process.exit(1);
+});

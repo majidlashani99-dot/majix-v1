@@ -1,2 +1,21 @@
-import crypto from 'node:crypto';
-export function validateTelegramInitData(initData:string,botToken:string,maxAgeSeconds=86400){const p=new URLSearchParams(initData);const hash=p.get('hash');if(!hash)return false;p.delete('hash');const dataCheck=[...p.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>`${k}=${v}`).join('\n');const secret=crypto.createHmac('sha256','WebAppData').update(botToken).digest();const expected=crypto.createHmac('sha256',secret).update(dataCheck).digest('hex');const age=Number(p.get('auth_date')||0);return crypto.timingSafeEqual(Buffer.from(expected),Buffer.from(hash)) && (Date.now()/1000-age<=maxAgeSeconds);}
+﻿import crypto from 'node:crypto';
+
+export function validateTelegramInitData(initData: string, botToken: string, maxAgeSeconds = 86400) {
+  const p = new URLSearchParams(initData);
+  const hash = p.get('hash');
+  if (!hash) return false;
+  p.delete('hash');
+  const entries: [string, string][] = [];
+  p.forEach((val, key) => entries.push([key, val]));
+  const dataCheck = entries
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const expected = crypto.createHmac('sha256', secret).update(dataCheck).digest('hex');
+  const age = Number(p.get('auth_date') || 0);
+  return (
+    crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(hash)) &&
+    Date.now() / 1000 - age <= maxAgeSeconds
+  );
+}
